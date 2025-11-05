@@ -1,0 +1,236 @@
+清洗
+```{r}
+# ====== 依赖 ======
+suppressPackageStartupMessages({
+  library(dplyr)
+})
+
+# ====== 参数（按需修改路径）======
+input_file  <- "random18_depth=325_inter_input.rdata"        # <- 修改为你的 .rdata 路径
+output_file <- "random18_depth=325_esp.rdata" # 输出文件名/路径
+
+# ====== 载入数据 ======
+load(input_file)
+
+# 基本检查
+if (!exists("data_interpolated")) {
+  stop("在输入文件中未找到变量 `data_interpolated`。")
+}
+if (!("frame" %in% names(data_interpolated))) {
+  stop("`data_interpolated` 中未找到列 `frame`。")
+}
+
+# ====== 清洗与重编号 ======
+esp_data <- data_interpolated %>%
+  # 1) 删除任何含 NA 的行
+  na.omit() %>%
+  # 2) 按 frame（以及 node 若存在）排序，确保顺序一致
+  { if ("node" %in% names(.)) arrange(., frame, node) else arrange(., frame) } %>%
+  # 3) 将 frame 压缩为连续整数 t（第一个 frame -> t=1，第二个 -> t=2，...）
+  mutate(t = dplyr::dense_rank(frame)) %>%
+  # 4) 去掉旧的 frame 列
+  select(-frame)
+
+# ====== 保存结果 ======
+save(esp_data, file = output_file)
+
+# （可选）提示信息
+cat(sprintf("已生成清洗后的文件：%s\n", output_file))
+cat(sprintf("数据维度：%d 行 × %d 列；t 的范围：[%d, %d]\n",
+            nrow(esp_data), ncol(esp_data),
+            min(esp_data$t), max(esp_data$t)))
+
+
+
+```
+分岔
+```{r}
+# —— Packages ——
+library(dplyr)
+library(ggplot2)
+
+# —— 1) 加载数据 ——
+load("random18_depth=0_inter_input.rdata")  
+# 加载后得到 data_interpolated
+
+# —— 2) 极值提取函数（窗口=3，跳过含 NA） ——
+find_custom_peaks_valleys <- function(data, frame_start, frame_end) {
+  data <- data %>% filter(frame >= frame_start, frame <= frame_end)
+  if (nrow(data) < 3) return(list(peaks = data.frame(), valleys = data.frame()))
+  
+  peaks   <- data.frame(frame = numeric(), y = numeric())
+  valleys <- data.frame(frame = numeric(), y = numeric())
+  
+  for (i in seq_len(nrow(data) - 2)) {
+    y_vals     <- data$y[i:(i+2)]
+    frame_vals <- data$frame[i:(i+2)]
+    if (any(is.na(y_vals))) next
+    
+    if (y_vals[2] == max(y_vals)) {
+      peaks <- rbind(peaks, data.frame(frame = frame_vals[2], y = y_vals[2]))
+    } else if (y_vals[2] == min(y_vals)) {
+      valleys <- rbind(valleys, data.frame(frame = frame_vals[2], y = y_vals[2]))
+    }
+  }
+  list(peaks = peaks, valleys = valleys)
+}
+
+# —— 3) 参数设置 ——
+frame_start <- 24700
+frame_end   <- 24950
+max_node    <- 100
+
+# —— 4) 提取极值并整理数据 ——
+all_data <- data.frame(node = integer(), y = numeric(), type = character())
+
+for (node_number in seq_len(max_node)) {
+  df_node <- data_interpolated %>% filter(node == node_number)
+  pv      <- find_custom_peaks_valleys(df_node, frame_start, frame_end)
+  
+  if (nrow(pv$peaks) > 0) {
+    all_data <- rbind(all_data,
+                      data.frame(node = node_number, y = pv$peaks$y, type = "peak"))
+  }
+  if (nrow(pv$valleys) > 0) {
+    all_data <- rbind(all_data,
+                      data.frame(node = node_number, y = pv$valleys$y, type = "valley"))
+  }
+}
+
+# —— 5) 坐标整体平移（减去150） ——
+all_data$y <- all_data$y #- 150
+
+# —— 6) 画分岔图 ——
+p <- ggplot(all_data, aes(x = node, y = y)) +
+  geom_point(alpha = 0.5, size = 0.2) +
+  labs(
+    title = "Bifurcation diagram",
+    x     = "Node",
+    y     = "X"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    axis.line        = element_line(colour = "black"),
+    axis.text.x      = element_text(size = 20, angle = 45, hjust = 1),
+    axis.text.y      = element_text(size = 20),
+    axis.title       = element_text(size = 20),
+    plot.title       = element_text(size = 20)
+  ) 
+# —— 7) 保存图片 ——
+ggsave("bifurcation_single_file_shifted_0.png", plot = p, dpi = 300, width = 6, height = 4)
+
+```
+PSD
+```{r}
+# ===================== 依赖 =====================
+library(dplyr)
+library(ggplot2)
+library(tibble)
+
+# ===================== 参数 =====================
+duration <- 200
+nodes <- 1:100
+eps <- 1e-12
+
+# ===================== 加载数据 =====================
+load("esp_data_cleaned.rdata")  
+# 加载后应包含 esp_data (列名: t, y, node)
+
+# ===================== 单节点 PSD 函数 =====================
+compute_psd <- function(df, node_id, duration = 200) {
+  node_data <- df %>% filter(node == node_id, t >= 1, t <= 2000)
+  y <- node_data$y
+  N <- length(y)
+  if (N < 2) return(tibble(freq = numeric(0), spec = numeric(0), node = integer(0)))
+  
+  yy <- (Mod(fft(y))[1:(N %/% 2)])^2
+  xx <- seq(0, N / duration / 2, length.out = N %/% 2)
+  tibble(freq = xx, spec = yy) %>%
+    filter(freq > 0) %>%
+    mutate(node = node_id)
+}
+
+# ===================== 计算所有节点 PSD =====================
+df_psd <- bind_rows(lapply(nodes, function(n) compute_psd(esp_data, n, duration)))
+
+# log10 转换
+df_psd <- df_psd %>%
+  mutate(log_spec = log10(spec + eps),
+         node = as.factor(node))
+
+# ===================== 绘制热图 =====================
+p <- ggplot(df_psd, aes(x = as.numeric(node), y = freq, fill = log_spec)) +
+  geom_tile() +
+  scale_fill_gradientn(
+    colours = c("blue", "cyan", "green", "yellow", "red"),
+    name = "log10(PSD)"
+  ) +
+  scale_x_continuous(breaks = seq(0, 100, by = 25)) +
+  labs(
+    title = "Power Spectral Density Silicon Arm",
+    x = "Node",
+    y = "Frequency (Hz)"
+  ) +
+  theme(
+    text = element_text(size = 18),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background  = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank()
+  )
+
+# ===================== 保存结果 =====================
+ggsave("PSD_single_file.png", p, width = 6, height = 5, dpi = 300)
+ggsave("PSD_single_file.pdf", p, width = 6, height = 5)
+
+```
+ESP
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# —— 参数 —— 
+t1            <- 1
+t2            <- 1000
+var_selection <- "y"   # 依然选择 y 作为变量
+
+# —— 载入两个文件 —— 
+load("random18_depth=325_esp.rdata");  df1 <- esp_data; rm(esp_data)
+load("random168_depth=325_esp.rdata"); df2 <- esp_data; rm(esp_data)
+
+# —— 提取时间区间 —— 
+df1_sub <- df1 %>%
+  filter(t >= t1, t <= t2) %>%
+  select(t, node, v1 = all_of(var_selection))
+
+df2_sub <- df2 %>%
+  filter(t >= t1, t <= t2) %>%
+  select(t, node, v2 = all_of(var_selection))
+
+# —— 计算平方差 & Global ESP —— 
+dist_summary <- inner_join(df1_sub, df2_sub, by = c("t", "node")) %>%
+  transmute(t, node, dist2 = (v1 - v2)^2)
+
+global_esp_time <- dist_summary %>%
+  group_by(t) %>%
+  summarise(global_esp = sqrt(sum(dist2)), .groups = "drop")
+
+# —— 绘图 —— 
+p <- ggplot(global_esp_time, aes(x = t, y = global_esp)) +
+  geom_line(size = 1, color = "#2171b5") +
+  geom_point(size = 1, color = "#2171b5") +
+  labs(title = "ESP between random18 & random168",
+       x = "Time Step", y = "Global ESP") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 24),
+    axis.title = element_text(size = 20),
+    axis.text  = element_text(size = 16)
+  )
+
+ggsave("ESP_random18_vs_random168.png", p, dpi = 300, width = 8, height = 3)
+
+```
+

@@ -1,0 +1,100 @@
+load
+```{r}
+source("utility.R")
+source("rc2.R")
+
+load("R1_1720_168_live_txynu2.rdata")
+file_name <- "R1_1720_168_live"
+
+uu <- scan("input168.txt") # length is 4995
+# uu <- scan("input18.txt")
+
+# file_name <- "R1_1433_168_dead"
+# file_name <- "L1_1600_18_dead"
+# file_name <- "L1_1600_18_dead"
+# file_name <- "L1_1542_18_dead"
+# file_name <- "L1_1505_168_dead"
+# file_name <- "L1_1515_168_dead"
+# file_name <- "L1_1524_168_dead"
+# file_name <- "L1_1533_168_dead"
+# file_name <- "R1_1351_168_dead" # OK
+# file_name <- "R1_1423_168_dead" # weird, but using median (avoiding NA), it succeeded
+
+# load("R1_1745_168_live_txynu2.rdata")
+# file_name <- "R1_1745_168_live"
+
+# load("R1_1518_168_dead_txynu2.rdata")
+# file_name <- c("R1_1518_168_dead")
+
+# load("R1_1732_168_live_txynu2.rdata")
+# file_name <- c("R1_1732_168_live")
+
+# load("R1_1720_168_live_txynu2.rdata")
+# file_name <- c("R1_1720_168_live")
+  
+txynu2 <- txynu2 %>% mutate(time_in_u_int=as.integer(floor(time_in_u)))
+```
+wash
+```{r}
+d <- txynu2[complete.cases(txynu2),]
+
+X <- 
+  d %>% 
+  drop_na() %>% 
+  group_by(time_in_u_int, node) %>% 
+  summarise(y=median(y, na.rm=T)) %>% 
+  pivot_wider(names_from="node", names_prefix="x", names_sep="", values_from="y") %>% 
+  ungroup() %>% 
+  select(-time_in_u_int)
+
+X <- as.matrix(X)
+Xt <- t(X)
+X <- t(Xt[complete.cases(Xt),])
+
+dim(X)
+```
+plot
+```{r}
+
+if (!dir.exists("output")) {
+  dir.create("output")
+}
+
+
+files <- list.files("result_memory_function", pattern = "\\.txt$", full.names = TRUE)
+
+
+for (file_name in files) {
+  
+  
+  plot_title <- sub("\\.txt$", "", basename(file_name))
+  
+  
+  mf_val <- scan(file_name)
+  
+  
+  png_filename <- paste0("output/", plot_title, ".png")
+  
+  
+  png(png_filename, width = 800, height = 600)
+  
+  
+  plot(mf_val, 
+       ylim = c(0, 1), 
+       type = "l", 
+       col = "black", 
+       xlab = "delay", 
+       ylab = "MC", 
+       main = plot_title)
+  
+  
+  points(mf_val, pch = 19, col = "red", cex = 0.6)
+  
+  
+  dev.off()
+  
+  cat("save:", png_filename, "\n")
+}
+
+
+```

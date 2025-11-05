@@ -1,0 +1,377 @@
+wash data
+```{r}
+library(dplyr)
+
+
+data_dir  <- "/Users/boweiyu/Arm project/Alife paper/video_data"
+wash_dir  <- file.path(data_dir, "wash data")
+
+
+if (!dir.exists(wash_dir)) {
+  dir.create(wash_dir)
+}
+
+
+files <- list.files(data_dir, pattern = "\\.rdata$", full.names = TRUE)
+
+
+for (f in files) {
+  
+  tmp_env <- new.env()
+  load(f, envir = tmp_env)
+  
+ 
+  df_name <- ls(tmp_env)[1]
+  df       <- tmp_env[[df_name]]
+  
+  
+  df_clean <- df %>%
+    rename(frame = time_in_u) %>%
+    select(-u)
+  
+ 
+  all_results <- df_clean
+  
+ 
+  save(all_results, file = file.path(wash_dir, basename(f)))
+}
+
+
+cat("清洗并保存完毕：\n")
+print(list.files(wash_dir))
+
+
+```
+
+all node and all peak(y)（time is a axis）
+```{r}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+
+
+data_folder <- "/Users/boweiyu/Arm project/Alife paper/wash data/"
+all_files <- list.files(
+  path       = data_folder,
+  pattern    = "^R1_[0-9]+_168_(live|dead)\\.rdata$",
+  full.names = TRUE
+)
+
+
+max_node      <- 100
+output_folder <- "bifurcation_time"
+if (!dir.exists(output_folder)) dir.create(output_folder)
+
+
+extract_time <- function(filepath) {
+  fname    <- basename(filepath)
+  time_str <- sub("^R1_([0-9]+)_168_.*$", "\\1", fname)
+  as.numeric(time_str)
+}
+
+
+find_custom_peaks_valleys <- function(data, frame_start, frame_end) {
+  data <- data %>% filter(frame >= frame_start, frame <= frame_end)
+  if (nrow(data) < 3) return(list(peaks = data.frame(), valleys = data.frame()))
+
+  peaks   <- data.frame(frame = numeric(), y = numeric())
+  valleys <- data.frame(frame = numeric(), y = numeric())
+
+  for (i in seq_len(nrow(data) - 2)) {
+    y_vals     <- data$y[i:(i+2)]
+    frame_vals <- data$frame[i:(i+2)]
+    if (any(is.na(y_vals))) next
+    if (y_vals[2] == max(y_vals)) {
+      peaks   <- rbind(peaks,   data.frame(frame = frame_vals[2], y = y_vals[2]))
+    } else if (y_vals[2] == min(y_vals)) {
+      valleys <- rbind(valleys, data.frame(frame = frame_vals[2], y = y_vals[2]))
+    }
+  }
+  list(peaks = peaks, valleys = valleys)
+}
+
+ 
+frame_start <- 1000
+frame_end   <- 5000
+
+
+for (specific_node in 1:max_node) {
+  all_data <- data.frame(time = numeric(), y = numeric(), type = character())
+
+  for (file in all_files) {
+    load(file)  
+    df_node <- all_results %>% filter(node == specific_node)
+    time_val <- extract_time(file)
+
+    pv <- find_custom_peaks_valleys(df_node, frame_start, frame_end)
+    if (nrow(pv$peaks)   > 0) {
+      all_data <- rbind(all_data,
+                        data.frame(time = rep(time_val, nrow(pv$peaks)),
+                                   y    = pv$peaks$y,
+                                   type = "peak"))
+    }
+    if (nrow(pv$valleys) > 0) {
+      all_data <- rbind(all_data,
+                        data.frame(time = rep(time_val, nrow(pv$valleys)),
+                                   y    = pv$valleys$y,
+                                   type = "valley"))
+    }
+  }
+
+ 
+  all_data <- all_data %>% arrange(time)
+  all_data$time <- factor(all_data$time, levels = unique(all_data$time))
+
+  
+  p <- ggplot(all_data, aes(x = time, y = y)) +
+    geom_point(size = 0.5, alpha = 0.5) +
+    ylim(-50, 50) +
+    theme_minimal() +
+    theme(
+      panel.grid.major   = element_blank(),
+      panel.grid.minor   = element_blank(),
+      panel.background   = element_blank(),
+      axis.line          = element_line(colour = "black"),
+      axis.text.x        = element_text(size = 20, angle = 45, hjust = 1),
+      axis.text.y        = element_text(size = 20),
+      axis.title         = element_text(size = 20),
+      plot.title         = element_text(size = 16, face = "bold")
+    ) +
+    labs(
+      title = paste("Bifurcation diagram for node =", specific_node, "across time"),
+      x     = "Time", 
+      y     = "X"
+    )
+
+
+  ggsave(
+    filename = sprintf("%s/bifurcation_node_%d_horizontal.pdf", output_folder, specific_node),
+    plot     = p,
+    width    = 10, height = 7
+  )
+}
+
+
+```
+
+x-node，y-y
+```{r}
+library(dplyr)
+library(ggplot2)
+
+
+data_folder <- "/Users/boweiyu/Arm project/Alife paper/wash data/"
+all_files <- list.files(
+  path       = data_folder,
+  pattern    = "^R1_[0-9]+_168_(live|dead)\\.rdata$",
+  full.names = TRUE
+)
+
+
+output_folder <- "bifurcation_node"
+if (!dir.exists(output_folder)) dir.create(output_folder)
+
+
+extract_time <- function(filename) {
+  fname    <- basename(filename)
+  time_str <- sub("^R1_([0-9]+)_168_.*$", "\\1", fname)
+  as.numeric(time_str)
+}
+
+ 
+find_custom_peaks_valleys <- function(data, frame_start, frame_end) {
+  data <- data %>% filter(frame >= frame_start, frame <= frame_end)
+  
+  if (nrow(data) < 3) return(list(peaks = data.frame(), valleys = data.frame()))
+  
+  peaks   <- data.frame(frame = numeric(), y = numeric())
+  valleys <- data.frame(frame = numeric(), y = numeric())
+  
+  for (i in seq_len(nrow(data) - 2)) {
+    y_vals     <- data$y[i:(i+2)]
+    frame_vals <- data$frame[i:(i+2)]
+    
+    if (any(is.na(y_vals))) next
+    
+    if (y_vals[2] == max(y_vals)) {
+      peaks   <- rbind(peaks,   data.frame(frame = frame_vals[2], y = y_vals[2]))
+    } else if (y_vals[2] == min(y_vals)) {
+      valleys <- rbind(valleys, data.frame(frame = frame_vals[2], y = y_vals[2]))
+    }
+  }
+  
+  list(peaks = peaks, valleys = valleys)
+}
+
+
+frame_start <- 24700
+frame_end   <- 24950
+max_node    <- 100
+
+
+for (file in all_files) {
+  time_val <- extract_time(file)
+  all_data  <- data.frame(node = integer(), y = numeric(), type = character())
+  
+  load(file)  
+  
+  for (node_number in seq_len(max_node)) {
+    df_node <- all_results %>% filter(node == node_number)
+    pv      <- find_custom_peaks_valleys(df_node, frame_start, frame_end)
+    
+    if (nrow(pv$peaks)   > 0) {
+      all_data <- rbind(all_data,
+                        data.frame(node = node_number,
+                                   y    = pv$peaks$y,
+                                   type = "peak"))
+    }
+    if (nrow(pv$valleys) > 0) {
+      all_data <- rbind(all_data,
+                        data.frame(node = node_number,
+                                   y    = pv$valleys$y,
+                                   type = "valley"))
+    }
+  }
+  
+  p <- ggplot(all_data, aes(x = node, y = y)) +
+    geom_point(alpha = 0.5, size = 0.2) +
+    labs(
+      title = paste("t =", time_val),
+      x     = "Node", y = "X"
+    ) +
+    theme_minimal() +
+    theme(
+      panel.grid.major   = element_blank(),
+      panel.grid.minor   = element_blank(),
+      panel.background   = element_blank(),
+      axis.line          = element_line(colour = "black"),
+      axis.text.x        = element_text(size = 30, angle = 45, hjust = 1),
+      axis.text.y        = element_text(size = 30),
+      axis.title         = element_text(size = 30),
+      plot.title         = element_text(size = 30)
+    ) +
+    # —— y 轴固定范围 —— 
+    coord_cartesian(ylim = c(-50, 50))
+  
+  outfile <- sprintf("%s/bifurcation_time_%d_horizontal.png",
+                     output_folder, time_val)
+  ggsave(filename = outfile, plot = p, dpi = 300, width = 10, height = 7)
+}
+
+```
+all plot in one figure
+```{r}
+library(dplyr)
+library(ggplot2)
+
+ 
+data_folder <- "/Users/boweiyu/Arm project/Alife paper/wash data/"
+all_files <- list.files(
+  path       = data_folder,
+  pattern    = "^R1_[0-9]+_168_(live|dead)\\.rdata$",
+  full.names = TRUE
+)
+
+
+output_folder <- "bifurcation_node"
+if (!dir.exists(output_folder)) dir.create(output_folder)
+
+
+extract_time <- function(filename) {
+  fname    <- basename(filename)
+  time_str <- sub("^R1_([0-9]+)_168_.*$", "\\1", fname)
+  as.numeric(time_str)
+}
+
+ 
+find_custom_peaks_valleys <- function(data, frame_start, frame_end) {
+  data <- data %>% filter(frame >= frame_start, frame <= frame_end)
+  if (nrow(data) < 3) return(list(peaks = data.frame(), valleys = data.frame()))
+  peaks   <- data.frame(frame = numeric(), y = numeric())
+  valleys <- data.frame(frame = numeric(), y = numeric())
+  for (i in seq_len(nrow(data) - 2)) {
+    y_vals     <- data$y[i:(i+2)]
+    frame_vals <- data$frame[i:(i+2)]
+    if (any(is.na(y_vals))) next
+    if (y_vals[2] == max(y_vals)) {
+      peaks   <- rbind(peaks,   data.frame(frame = frame_vals[2], y = y_vals[2]))
+    } else if (y_vals[2] == min(y_vals)) {
+      valleys <- rbind(valleys, data.frame(frame = frame_vals[2], y = y_vals[2]))
+    }
+  }
+  list(peaks = peaks, valleys = valleys)
+}
+
+
+frame_start <- 24700
+frame_end   <- 24950
+max_node    <- 100
+
+
+master_data <- data.frame(
+  time = numeric(),
+  node = integer(),
+  y    = numeric(),
+  type = character()
+)
+
+for (file in all_files) {
+  time_val <- extract_time(file)
+  load(file)  
+  
+  for (node_number in seq_len(max_node)) {
+    df_node <- all_results %>% filter(node == node_number)
+    pv      <- find_custom_peaks_valleys(df_node, frame_start, frame_end)
+    
+    if (nrow(pv$peaks) > 0) {
+      master_data <- rbind(
+        master_data,
+        data.frame(time = time_val,
+                   node = node_number,
+                   y    = pv$peaks$y,
+                   type = "peak")
+      )
+    }
+    if (nrow(pv$valleys) > 0) {
+      master_data <- rbind(
+        master_data,
+        data.frame(time = time_val,
+                   node = node_number,
+                   y    = pv$valleys$y,
+                   type = "valley")
+      )
+    }
+  }
+}
+
+
+master_data$time <- factor(master_data$time,
+                           levels = sort(unique(master_data$time)))
+
+
+p_all <- ggplot(master_data, aes(x = node, y = y)) +
+  #geom_point(alpha = 0.5, size = 0.2) +
+  geom_point(pch=".", alpha=0.5) +
+  facet_wrap(~ time,
+             nrow   = 3,
+             ncol   = 6,
+             labeller = labeller(time = function(x) paste0("t = ", x))) +
+  labs(x = "Node", y = "X") +
+  theme_minimal() +
+  theme(
+    strip.text        = element_text(size = 12, face = "bold"),
+    panel.grid.major  = element_blank(),
+    panel.grid.minor  = element_blank(),
+    axis.line         = element_line(colour = "black"),
+    axis.text.x       = element_text(size = 10, angle = 45, hjust = 1),
+    axis.text.y       = element_text(size = 10),
+    axis.title        = element_text(size = 14)
+  ) +
+  coord_cartesian(ylim = c(-50, 50))
+
+
+outfile <- file.path(output_folder, "all_times_bifurcation_3x6.pdf")
+ggsave(filename = outfile, plot = p_all, width = 18, height = 10)
+
+```
+

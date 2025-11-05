@@ -1,0 +1,272 @@
+load
+```{r}
+source("utility.R")
+source("rc2.R")
+
+load("R1_1528_168_dead_txynu2.rdata")
+#file_name <- "R1_1433_168_dead"
+
+#uu <- scan("input168.txt") # length is 4995
+# uu <- scan("input18.txt")
+
+  
+txynu2 <- txynu2 %>% mutate(time_in_u_int=as.integer(floor(time_in_u)))
+```
+plot
+```{r}
+plot_time_series <- function(d, time_roi = c(4950, 4995)){
+  txynu2 %>% filter(time_roi[1] < time_in_u & time_in_u < time_roi[2]) %>% 
+    ggplot(.) + 
+    geom_point(aes(time_in_u, y-node), pch=".", alpha=0.2) +
+    geom_line(aes(time_in_u, y-node, group=node), alpha=0.1) +
+    geom_vline(xintercept = seq(time_roi[1], time_roi[2], 1), alpha=0.05) +
+    geom_line(aes(time_in_u, u*5+20)) +
+    my_theme()
+}
+
+plot_time_series(txynu2, c(500, 700))
+```
+generate
+```{r}
+library(ggplot2)
+library(dplyr)
+library(viridis)  
+
+plot_time_series <- function(d, time_roi, save_path) {
+  p <- d %>%
+    filter(time_roi[1] <= time_in_u & time_in_u <= time_roi[2]) %>%
+    ggplot() +
+    geom_point(aes(time_in_u, y - node, color = as.numeric(node)), size = 1, alpha = 0.5, shape = 16) +  
+    geom_line(aes(time_in_u, y - node, group = node, color = as.numeric(node)), alpha = 0.3) +
+    geom_vline(xintercept = seq(time_roi[1], time_roi[2], 1), alpha = 0.05) +
+    geom_line(aes(time_in_u, u * 5 + 20), color = "black", alpha = 0.8) +  
+    scale_color_viridis_c(name = "Node", guide = guide_colorbar(barwidth = 1, barheight = 10)) +
+    theme_minimal() +
+    theme(legend.position = "right")  #
+
+  
+  ggsave(filename = save_path, plot = p, width = 8, height = 6, dpi = 300)
+}
+
+
+time_max <- max(txynu2$time_in_u, na.rm = TRUE)
+
+
+for (start_time in seq(0, time_max, by = 50)) {  
+  end_time <- start_time + 50
+  save_path <- sprintf("time_series_%d_%d.png", start_time, end_time)
+  plot_time_series(txynu2, c(start_time, end_time), save_path)
+}
+
+
+```
+
+time series
+```{r}
+library(ggplot2)
+library(dplyr)
+library(viridis)
+
+
+load("/Users/boweiyu/Arm project/Alife paper/original_data/1_day_R1_live/R1_1720_168_live_txynu2.rdata")
+tx1 <- txynu2 %>%
+  filter(time_in_u <= 50) %>%
+  mutate(dataset = factor("t=0", levels = c("t=0","t=1231","t=2747")))
+
+load("/Users/boweiyu/Arm project/Alife paper/original_data/2_day_R1/R1_1351_168_dead_txynu2.rdata")
+tx2 <- txynu2 %>%
+  filter(time_in_u <= 50) %>%
+  mutate(dataset = factor("t=1231", levels = c("t=0","t=1231","t=2747")))
+
+load("/Users/boweiyu/Arm project/Alife paper/original_data/3_day_dead_R1_full/R1_1528_168_dead_txynu2.rdata")
+tx3 <- txynu2 %>%
+  filter(time_in_u <= 50) %>%
+  mutate(dataset = factor("t=2747", levels = c("t=0","t=1231","t=2747")))
+
+combined <- bind_rows(tx1, tx2, tx3) %>%
+  
+  mutate(frame = time_in_u * 5)
+
+
+input_df <- combined %>%
+  distinct(dataset, frame, u)
+
+
+val_df <- expand.grid(dataset = levels(combined$dataset), u = c(0, 1)) %>%
+  mutate(
+    frame = min(combined$frame),
+    y     = u * 5 + 20
+  )
+
+）
+title_df <- data.frame(
+  dataset = levels(combined$dataset),
+  frame   = min(combined$frame),
+  y       = 1 * 5 + 20 + 3  
+)
+
+
+p <- ggplot(combined,
+            aes(x = frame,
+                y = y - node,
+                group = node,
+                color = as.numeric(node))) +
+  
+  geom_point(size = 1, alpha = 0.5, shape = 16) +
+  geom_line(alpha = 0.3) +
+  
+  geom_line(
+    data = input_df,
+    aes(x = frame, y = u * 5 + 20),
+    inherit.aes = FALSE,
+    size = 0.6,
+    color = "black"
+  ) +
+  
+  scale_color_viridis_c(name = "Node") +
+  scale_x_continuous(name = "frame") +
+  scale_y_continuous(name = "horizontal coordinate (x-node)") +
+  
+  facet_wrap(~ dataset,
+             ncol          = 1,
+             scales        = "free_y",
+             strip.position = "top") +
+ 
+  theme_classic(base_size = 12) +
+  theme(
+    panel.background    = element_blank(),
+    plot.background     = element_blank(),
+    panel.grid.major    = element_blank(),
+    panel.grid.minor    = element_blank(),
+    axis.line           = element_line(color = "black"),
+    axis.ticks          = element_line(color = "black"),
+    axis.text.x         = element_text(size = 18, color = "black"),
+    axis.text.y         = element_text(size = 18, color = "black"),
+    axis.title.x        = element_text(size = 20),
+    axis.title.y        = element_text(size = 20),
+    legend.position     = "right",
+    strip.background    = element_blank(),
+    #strip.text          = element_text(face = "bold", size = 12),
+    panel.spacing       = unit(0.5, "lines")
+  )
+
+
+ggsave("three_times_with_input_labels_smallfont.png",
+       plot   = p,
+       width  = 10,
+       height = 6,
+       dpi    = 300)
+
+```
+initial length
+```{r}
+library(dplyr)
+library(ggplot2)
+
+
+data_folder <- "/Users/boweiyu/Arm project/Alife paper/wash data/"
+all_files <- list.files(
+  path       = data_folder,
+  pattern    = "^R1_[0-9]+_168_(live|dead)\\.rdata$",
+  full.names = TRUE
+)
+
+
+output_folder <- "arm length"
+if (!dir.exists(output_folder)) dir.create(output_folder)
+
+
+extract_time <- function(filename) {
+  fname    <- basename(filename)
+  time_str <- sub("^R1_([0-9]+)_168_.*$", "\\1", fname)
+  as.numeric(time_str)
+}
+
+
+results <- data.frame(time = numeric(), length = numeric())
+
+
+for (file in all_files) {
+  time_val <- extract_time(file)
+  
+  
+  env <- new.env()
+  load(file, envir = env)
+  df  <- env$all_results
+  
+  
+  df_frame <- df %>%
+    filter(frame == 1) %>%
+    arrange(node) %>%
+    select(node, x, y)
+  
+
+  total_length <- df_frame %>%
+    mutate(
+      x_next = lead(x),
+      y_next = lead(y)
+    ) %>%
+    filter(!is.na(x_next)) %>%
+    transmute(segment = sqrt((x_next - x)^2 + (y_next - y)^2)) %>%
+    pull(segment) %>%
+    sum()
+  
+  results <- rbind(results, data.frame(time = time_val, length = total_length))
+}
+
+
+results <- results %>% arrange(time)
+
+
+ggplot(results, aes(x = time, y = length)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Time", y = "Length", title = "Time vs Arm Length")
+
+
+results <- results %>%
+  arrange(time) %>%
+  mutate(group = case_when(
+    row_number() <= 6  ~ "1st day",
+    row_number() <= 12 ~ "2nd day",
+    TRUE               ~ "3rd day"
+  ))
+
+group_summary <- results %>%
+  group_by(group) %>%
+  summarise(mean_length = mean(length), .groups = "drop")
+
+
+p2 <- ggplot(
+  group_summary,
+  aes(x = factor(group, levels = c("1st day", "2nd day", "3rd day")),
+      y = mean_length, group = 1)
+) +
+  geom_line() +
+  geom_point(size = 3) +
+  labs(x = "", y = "Average Length", title = "Average Arm Length in Three Days") +
+  theme_classic() +
+  theme(
+    axis.text.x  = element_text(size = 18, color = "black"),
+    axis.text.y  = element_text(size = 18, color = "black"),
+    axis.title.x = element_text(size = 20 ),
+    axis.title.y = element_text(size = 20 ),
+    plot.title   = element_text(size = 20, hjust = 0.5)
+  )
+
+print(p2)
+
+ggsave(
+  filename = file.path(output_folder, "average_length_by_group.png"),
+  plot     = p2,
+  dpi      = 300,
+  width    = 6,
+  height   = 4,
+  units    = "in"
+)
+
+
+```
+
+
+

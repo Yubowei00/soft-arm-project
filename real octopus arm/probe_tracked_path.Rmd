@@ -1,0 +1,506 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+source("utility.R")
+
+load("R1_1634_168_live_txyn.rdata") 
+file_name <- "R1_1634_168_live"
+
+u <- scan("random168.txt")
+# u <- scan("random18.txt")
+u <- (u - 744)/1712
+```
+note: t is 'frame' in txyn (time, x, y, node). This may be mis-leading, but it affects other programs. 
+
+done: R1_1433_168_dead.MP4_out_txyn.rdata
+done: R1_1443_168_dead.MP4_out_txyn.rdata
+done: R1_1453_168_dead.MP4_out_txyn.rdata
+done: R1_1503_18_dead.MP4_out_txyn.rdata
+skip: R1_1634_168_live_txyn.rdata # wired part at basal part, skip
+skip: R1_1647_168_live_txyn.rdata # skip
+skip: R1_1700_168_live_txyn.rdata # skip
+done: R1_1755_168_live_crop_txyn.rdata # job
+R1_1810_168_live_crop_txyn.rdata # skip, wired part at basal part
+done: R1_1820_168_live_crop_txyn.rdata # job
+done: R1_1829_168_live_crop_txyn.rdata # job
+
+done: R1_1512_18_dead.MP4_out_txyn.rdata # job
+d R1_1520_18_dead.MP4_out_txyn.rdata # missing tracking at tail
+d R1_1530_18_dead.MP4_out_txyn.rdata # missing tracking at tail
+d R1_1538_18_dead-003_s2_out_txyn.rdata # job 18:45 including memory f
+d R1_1541_18_dead.MP4_out_txyn.rdata # missing tracking at tail
+d R1_1550_18_dead.MP4_out_txyn.rdata # missing tracking at tail
+d R1_1601_18_dead.MP4_out_txyn.rdata # missing tracking at tail
+
+done: R1_1528_168_dead-002_s2_out_txyn.rdata
+
+done: L1_1505_168_dead-010_50fps_out_txyn.rdata
+done: L1_1515_168_dead-009_50fps_out_txyn.rdata
+done: L1_1524_168_dead-008_50fps_out_txyn.rdata
+done: L1_1533_168_dead-002_50fps_out_txyn.rdata
+
+done: L1_1542_18_dead-003_50fps_out_txyn.rdata
+done: L1_1551_18_dead-004_50fps_out_txyn.rdata
+done: L1_1600_18_dead-006_50fps_out_txyn.rdata
+
+done: R1_1351_168_dead.MP4_out_txyn.rdata
+done: run on console; R1_1403_168_dead.MP4_out_txyn.rdata
+done; 0731_0905 R1_1413_168_dead.MP4_out_txyn.rdata # # weird, but using median (avoiding NA), it succeeded
+done: R1_1423_168_dead.MP4_out_txyn.rdata #  weird track path exist, see probe_tracked_path_R1_1423_168_dead.Rmd
+d R1_1507_168_dead-017_s2_out_txyn.rdata # from 4000 to 10500 but need check, cannot determine the tail end
+done: R1_1518_168_dead-008_s2_out_txyn.rdata
+done: R1_1720_168_live_crop_txyn.rdata
+done: R1_1732_168_live_crop_txyn.rdata
+done: R1_1745_168_live_crop_txyn.rdata
+
+
+# check head part
+
+```{r}
+txyn %>% 
+  filter(node==20 & 0  < t & t < 500) %>% 
+  ggplot(.) + 
+  geom_line(aes(t, y), alpha=0.2) + 
+  geom_point(aes(t, y)) 
+  # geom_vline(xintercept=1)
+```
+seed 168 case:
+> head(u, 20)
+ [1] 1 1 0 0 0 1 1 1 1 1 1 0 1 0 0 0 1 0 1 1
+        ^
+        cut here
+
+seed 18
+> head(u, 20)
+ [1] 0 1 0 0 0 0 0 0 0 0 1 0 1 1 1 1 0 0 1 1
+      ^
+
+
+
+
+# check tail part
+```{r}
+ggplot(txyn %>% filter(node==20 & t > (max(txyn$t)-200))) + 
+  geom_line(aes(t, y), alpha=0.2) + 
+  geom_point(aes(t, y)) 
+  # geom_vline(xintercept=24975)
+```
+seed 168 case:
+> tail(u, 20)
+ [1] 1 1 1 0 0 0 0 0 0 0 1 1 0 0 0 1 0 1 1 1
+                                      ^
+                                      cut here
+see 18 case:
+> tail(u, 20)
+ [1] 1 1 1 0 0 0 0 0 0 0 1 1 0 0 0 1 0 1 1 1
+                                    
+
+
+```{r}
+# plot(u[(length(u)-20):length(u)], type="b")
+```
+
+
+# detect swiching timing
+```{r}
+dp <- 
+  txyn %>% 
+  filter(node==20 & 0 < t & t < 200) %>% 
+  mutate(dy=c(0, abs(diff(y)))) %>% 
+  mutate(peak = !is.na(find_peak(dy, 1)))  # threshold tuning
+  
+  ggplot(dp) + 
+  geom_point(aes(t, y)) +
+  geom_line(aes(t, y), alpha=0.2) +
+  geom_point(aes(t, y), data=dp %>% filter(peak), col=2)
+```
+
+
+
+```{r}
+txyn %>% 
+  filter(node==20 & 0 < t & t < 200) %>% 
+  mutate(dy=c(0, abs(diff(y)))) %>% 
+  mutate(peak = !is.na(find_peak(dy, 1))) %>% # 
+  filter(peak) %>% 
+  head(1) %>% 
+  .$t -> head_frame
+
+head_frame <- head_frame -1
+head_frame
+```
+
+
+```{r}
+txyn %>% 
+  filter(node==20 & t > (max(txyn$t)-100) & t <= (max(txyn$t)-0)) %>% 
+  mutate(dy=c(0, abs(diff(y)))) %>% 
+  mutate(peak = !is.na(find_peak(dy, 2))) %>%  # threshold tuning 
+  ggplot(.) + 
+  geom_point(aes(t, y)) +
+  geom_line(aes(t, y), alpha=0.2) +
+  geom_point(aes(t, y), data=. %>% filter(peak), col=2)
+```
+
+
+# (IMPORTANT) tail cut
+```{r}
+txyn %>% 
+  filter(node==20 & t > (max(txyn$t)-100) & t <= (max(txyn$t)-0)) %>% 
+  mutate(dy=c(0, abs(diff(y)))) %>% 
+  mutate(peak = !is.na(find_peak(dy, 2))) %>% 
+  filter(peak) %>% 
+  tail(1) %>% 
+  .$t -> tail_frame
+
+tail_frame <- tail_frame - 8 - 3
+tail_frame
+```
+
+
+From the txyn, we need to remove the corresponding head- and tail-part.
+
+
+# automatically determine the init and last input change (0 to 1 or 1 to 0)
+
+```{r}
+head_diff <- head(diff(u), 20)
+for (i in 1:20) {
+  if (head_diff[i] != 0) {
+    init_frame <- i + 1
+    break; 
+  }
+}
+init_frame
+
+tail_diff <- rev(tail(diff(u), 20))
+for (i in 1:20) {
+  if (head_diff[i] != 0) {
+    last_frames_num <- i + 1
+    break;
+  }
+}
+# last_frames_num
+# u[(length(u)-last_frames_num+1):length(u)]
+last_frame <- length(u) - last_frames_num
+last_frame
+uu <- as.integer(u[init_frame:last_frame])
+head(uu)
+tail(uu)
+length(uu)
+
+write(uu, file="input168.txt")
+# write(uu, file="input18.txt")
+
+uu <- scan("input168.txt")
+# uu <- scan("input18.txt")
+```
+
+# time matching
+```{r}
+txyn %>%
+  filter(t >= head_frame & t <= tail_frame) %>% 
+  mutate(y=y-mean(y)) %>% 
+  group_by(node) %>% 
+  mutate(frame_t = t - head_frame + 1) %>%   # offset, t from 1
+  mutate(time_in_u = approx(1:length(uu), n=length(frame_t))$y) %>% 
+  mutate(time_sec=(time_in_u-1)*0.1) %>% # 0.1 sec for tau, one time step
+  mutate(u = map_int(time_in_u, \(ui) { uu[ui] })) %>% 
+  select(-t, -frame_t) %>% 
+  ungroup() -> txynu
+```
+
+
+```{r}
+ggplot(txynu %>% filter(time_sec < 8 & node == 20)) + 
+  geom_line(aes(time_sec, y, col=as.character(u), group=node)) +
+  geom_line(aes(time_sec, u, group=node)) +
+  my_theme()
+```
+
+```{r}
+ggplot(txynu %>% filter(200 < time_sec & time_sec < 205 & node == 10)) + 
+  geom_line(aes(time_sec, y, col=as.character(u), group=node)) +
+  geom_line(aes(time_sec, u, group=node)) +
+  my_theme()
+```
+
+
+
+```{r}
+ggplot(txynu %>% filter(time_sec < 8 & node == 20)) + 
+  geom_line(aes(time_sec, c(0, diff(y)), col=as.character(u), group=node)) +
+  geom_line(aes(time_sec, c(0, diff(u)) )) +
+  # geom_line(aes(time_sec, u, group=node)) +
+  my_theme()
+```
+The peak values must be preceded by the input peak value!!!
+
+```{r}
+ggplot(txynu %>% 
+         filter(node==20 & 
+                  time_sec > max(time_sec) - 7 & 
+                  time_sec < max(time_sec))) + 
+      geom_line(aes(time_sec, u)) +
+    # geom_line(aes(time_sec, c(0, diff(u)) )) +
+  geom_line(aes(time_sec, y, col=as.character(u), group=node)) +
+  # geom_line(aes(time_sec, c(0, diff(y)), col=as.character(u), group=node)) +
+  my_theme()
+```
+
+
+```{r}
+ggplot(txynu %>% filter(node==20 & time_sec > max(time_sec) - 7 & time_sec < max(time_sec))) +
+  geom_line(aes(time_sec, c(0, diff(y)), col=as.character(u), group=node)) +
+  geom_point(aes(time_sec, c(0, diff(y)), col=as.character(u), group=node)) +  
+  geom_line(aes(time_sec, c(0, diff(u)-0), group=node)) +  
+  my_theme()
+```
+
+Inbetween the peaks, it is important to have the values. This tail part is most important to check.
+
+
+
+# save txynu
+```{r}
+save(txynu, file=paste0(file_name, "_txynu.rdata"))
+```
+
+
+# check stable part
+```{r}
+load(file=paste0(file_name, "_txynu.rdata"))
+```
+
+
+How path length is changing? If extreme change happens, remove the paths.
+```{r}
+txynu %>% 
+  group_by(time_in_u) %>% 
+  summarise(max_node_num=max(node)) %>% 
+  ggplot(.) + 
+  geom_histogram(aes(max_node_num), bins=50)
+```
+
+
+
+# remove more than L
+```{r}
+L <- 350 # currently this is just set large number
+load("/Users/boweiyu/Arm project/Alife paper/R1_1820_168_live_txynu.rdata")
+d <- txynu
+```
+
+fix the L though all frames, from base point
+
+```{r}
+txynu %>% 
+  filter(101 < time_sec & time_sec < 103) -> d
+
+ggplot(d) + 
+  geom_point(aes(x, y), pch=".") +
+  geom_line(aes(x, y, group=time_sec), alpha=0.5) +
+  my_theme() +
+  coord_fixed()
+
+```
+
+```{r}
+ggplot(d) + 
+  geom_line(aes(time_sec, y, group=node, col=node), alpha=0.5) +
+  my_theme() 
+
+```
+
+```{r}
+d %>% group_by(node) %>% summarise(time_sum=sum(time_in_u)) %>% ggplot(.) + geom_point(aes(node, time_sum)) +
+  geom_vline(xintercept=228)
+```
+paper
+```{r}
+library(dplyr)
+library(ggplot2)
+
+
+df_sum <- d %>%
+  group_by(node) %>%
+  summarise(time_sum = sum(time_in_u))
+
+
+max_y    <- max(df_sum$time_sum)
+max_node <- max(df_sum$node)
+
+
+p <- ggplot(df_sum, aes(x = node, y = time_sum)) +
+  geom_point() +
+  geom_vline(xintercept = 228) +
+  annotate(
+    "text",
+    x     = max_node - 65,        
+    y     = max_y * 0.85,       
+    label = "point = 228",
+    hjust = 1,                    
+    size  = 10                    
+  ) +
+  theme_classic() +
+  theme(
+    axis.title = element_text(size = 22),
+    axis.text  = element_text(size = 20)
+  ) +
+  labs(x = "point", y = "accumulated time")
+
+
+print(p)
+
+
+ggsave(
+  filename = "accumulated_time.png",
+  plot     = p,
+  dpi      = 300,
+  width    = 8,
+  height   = 5,
+  units    = "in"
+)
+
+
+
+```
+
+# set threshold
+```{r}
+node_select_th <- 110
+d %>% 
+  group_by(node) %>% 
+  mutate(node=ifelse(node < node_select_th, node, NA)) %>% 
+  ggplot(.) + 
+  geom_line(aes(time_sec, y-node, group=node, col=node), alpha=0.5)
+```
+
+
+
+```{r}
+equi_assign <- function(x, y, stable_path,
+                        other_var, # tibble(time_sec, time_in_u, u, path_cum_len)
+                        node_n, approx_n=500, na_th=10, plotout=F) {
+  
+  x <- x[stable_path==1]
+  y <- y[stable_path==1]
+  
+  # other vars, only time information is returned when no coordinate values
+  if (any(is.na(x)) | length(x) < na_th) {return(tibble(x=NA, y=NA, unique(other_var))) }
+
+  z <- approx(x, y, n=approx_n)
+  
+  d <- tibble(x=z$x, y=z$y)
+  d <- d %>% mutate(path_length=c(0, cumsum(sqrt(diff(x)^2 + diff(y)^2))))
+  
+  L <- d$path_length %>% max()
+  
+  equi_d <- seq(0, L, length.out=node_n)
+  
+  dd <- d %>%
+    mutate(node=findInterval(d$path_length, equi_d, all.inside=T)) %>%
+    group_by(node) %>%
+    mutate(sub_node=1:length(node)) %>%
+    mutate(node2=ifelse(sub_node==max(sub_node), node, 0)) %>%
+    mutate(node=node2) %>%
+    filter(node2 != 0) %>%
+    select(x, y, node)
+  
+  dd2 <- bind_rows(tibble(x=d[1,]$x, y=d[1,]$y, node=0), dd) 
+  dd2 <- bind_cols(dd2, other_var[1:(dim(dd2)[1]),])
+
+  # if (plotout) {
+  #   plot(
+  #     ggplot(d) +
+  #       geom_point(aes(x, y), pch=".", alpha=0.9) +
+  #       geom_point(aes(x, y), pch=1, data=dd2)
+  #   )
+  # }
+  return(dd2)
+}
+path_cumsum_length <- function(x, y) {
+  c(0, cumsum(sqrt(diff(x)^2 + diff(y)^2)))
+}
+
+d %>%
+  group_by(node) %>% 
+    # added to remove the wiered proximal part
+    # only for this?
+  mutate(node=ifelse(node < node_select_th & node > 20, node, NA)) %>% 
+  ungroup() %>% 
+  group_by(time_in_u) %>% 
+  mutate(path_cum_len=path_cumsum_length(x, y)) %>% 
+  # filter(path_cum_len < L) %>% # filter しちゃうとパスが少なくなる
+  mutate(stable_path=ifelse(path_cum_len < L, 1L, 0L)) -> d2
+d2 %>% 
+  mutate(max_path_len=max(path_cum_len)) %>% 
+  # filter(max_path_len > L - 5) %>% # ここで、time frame が抜けていた
+  reframe(equi_assign(x, y, stable_path,
+                      other_var=tibble(time_sec, time_in_u, u), node_n=100, approx_n=500)) -> d3
+
+ggplot(d3) + 
+  geom_point(aes(x, y), pch=".") +
+  geom_line(aes(x, y, group=time_sec), alpha=0.1) +
+  my_theme() +
+  coord_fixed()
+```
+0 proximal 
+
+```{r}
+ggplot(d3) + 
+  geom_line(aes(time_in_u, y-node*2, group=node), alpha=0.5) +
+  my_theme() 
+
+```
+
+
+# extract selected stable path
+
+```{r}
+# library(tictoc)
+# # node_select_th <- 140
+# tic()
+# txynu %>%
+#   group_by(node) %>%
+#   mutate(node=ifelse(node < node_select_th, node, NA)) %>%
+#   ungroup() %>%
+#   group_by(time_in_u) %>%
+#   mutate(path_cum_len=path_cumsum_length(x, y)) %>%
+#   mutate(stable_path=ifelse(path_cum_len < L, 1L, 0L)) %>%
+#   mutate(max_path_len=max(path_cum_len)) %>%
+#   reframe(equi_assign(x, y, stable_path,
+#                       other_var=tibble(time_sec, time_in_u, u),
+#                       node_n=100, approx_n=500)) -> txynu2
+# save(txynu2, file=paste0(file_name, "_txynu2.rdata"))
+# toc()
+```
+
+This will take time.
+
+
+```{r}
+# ggplot(txynu2 %>% filter(400 < time_sec & time_sec < 410)) +
+#   geom_line(aes(time_sec, y-node, group=node), alpha=0.1) +
+#   geom_line(aes(time_sec, u*5)) +
+#   my_theme()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

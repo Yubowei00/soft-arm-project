@@ -1,0 +1,739 @@
+ESP code, use y coordinate
+```{r}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+
+# —— 参数 —— 
+t1 <- 4950              
+t2 <- 4990              
+var_selection <- "y"    
+
+
+data_folder <- "/Users/boweiyu/Arm project/Alife paper/ESP/"
+all_files   <- list.files(
+  path       = data_folder,
+  pattern    = "^R1_[0-9]+_168_(live|dead)\\.rdata$",
+  full.names = TRUE
+)
+
+ 
+extract_time <- function(f) {
+  as.numeric(sub("^R1_([0-9]+)_168_.*$", "\\1", basename(f)))
+}
+files_df <- tibble(
+  file = all_files,
+  time = sapply(all_files, extract_time)
+) %>% arrange(time)
+
+
+pair_levels <- paste0(
+  files_df$time[-nrow(files_df)], "-",
+  files_df$time[-1]
+)
+
+
+dist_summary <- bind_rows(
+  lapply(seq_len(nrow(files_df) - 1), function(i) {
+    f1      <- files_df$file[i]
+    f2      <- files_df$file[i + 1]
+    tm_pair <- pair_levels[i]
+
+    load(f1); df1 <- esp_data; rm(esp_data)
+    load(f2); df2 <- esp_data; rm(esp_data)
+
+    df1_sub <- df1 %>% filter(t >= t1 & t <= t2)
+    df2_sub <- df2 %>% filter(t >= t1 & t <= t2)
+
+    merged <- merge(
+      df1_sub, df2_sub,
+      by       = c("t","node"),
+      suffixes = c("_1","_2")
+    )
+
+    col1 <- paste0(var_selection, "_1")
+    col2 <- paste0(var_selection, "_2")
+
+    merged %>%
+      transmute(
+        pair     = tm_pair,
+        node,
+        dist     = abs(.data[[col1]] - .data[[col2]])
+      )
+  })
+)
+
+
+agg_dist <- dist_summary %>%
+  group_by(pair, node) %>%
+  summarise(dist_sum = sum(dist), .groups = "drop") %>%
+  mutate(pair = factor(pair, levels = pair_levels)) %>%
+  arrange(pair, node)
+
+
+pal <- setNames(rep(NA, length(pair_levels)), pair_levels)
+pal[1:5]   <- c("#084594","#2171b5","#4292c6","#6baed6","#9ecae1")
+pal[6]     <- "#de2d26"
+pal[7:11]  <- c("#006d2c","#238b45","#41ab5d","#74c476","#a1d99b")
+pal[12]    <- "#000000"
+pal[13:14] <- c("#f7fcb9","#addd8e")
+
+
+common_idxs   <- c(1:5, 7:11, 13:14)
+x_common      <- agg_dist %>%
+  filter(pair %in% pair_levels[common_idxs]) %>%
+  pull(dist_sum) %>% range(na.rm = TRUE)
+
+p4_idxs       <- c(6, 12)
+x_p4          <- agg_dist %>%
+  filter(pair %in% pair_levels[p4_idxs]) %>%
+  pull(dist_sum) %>% range(na.rm = TRUE)
+
+
+y_limits <- c(100, 1)
+
+
+make_plot <- function(pairs, title, show_x, x_limits) {
+  ggplot(
+    agg_dist %>% filter(pair %in% pair_levels[pairs]),
+    aes(x = dist_sum, y = node, color = pair, group = pair)
+  ) +
+    geom_path(aes(order = node), size = 0.7) +
+    geom_point(size = 1.5) +
+    scale_color_manual(values = pal[pairs]) +
+    scale_x_continuous(limits = x_limits, expand = c(0,0)) +
+    scale_y_reverse(
+      limits = y_limits,
+      breaks = seq(1, 100, by = 10),
+      expand = c(0,0)
+    ) +
+    labs(
+      title = title,
+      x     = if (show_x) "Distance Sum" else NULL,
+      y     = "Node",
+      color = "Data pair"
+    ) +
+    theme_classic() +
+    theme(
+      panel.grid      = element_blank(),
+      legend.position = "right",
+      plot.title      = element_text(hjust = 0.5)
+    )
+}
+
+
+p1 <- make_plot(1:5,    "First day",             FALSE, x_common)
+p2 <- make_plot(7:11,   "Second day",            FALSE, x_common)
+p3 <- make_plot(13:14,  "Third day",             FALSE, x_common)
+p4 <- make_plot(c(6,12), "1st→2nd & 2nd→3rd",    TRUE,  x_p4)
+
+grob <- arrangeGrob(p1, p2, p3, p4, ncol = 1)
+ggsave(
+  "ESP index(4950-4990).pdf",
+  grob,
+  width  = 8,
+  height = 24
+)
+
+
+```
+local ESP and global ESP
+```{r}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+
+
+make_nonoverlap_windows <- function(n_nodes, win_len) {
+  stops  <- seq(win_len, n_nodes, by = win_len)
+  starts <- stops - win_len + 1
+  t(mapply(function(s, e) s:e, starts, stops))
+}
+
+
+data_folder   <- "/Users/boweiyu/Arm project/Alife paper/ESP/"
+t1            <- 4950      
+t2            <- 4990      
+part_n        <- 20        
+var_selection <- "y"       
+
+
+all_files <- list.files(data_folder,
+                        "^R1_[0-9]+_168_(live|dead)\\.rdata$",
+                        full.names=TRUE)
+extract_time <- function(f) as.numeric(sub("^R1_(\\d+)_168_.*$", "\\1",
+                                          basename(f)))
+files_df <- tibble(file = all_files,
+                   time = sapply(all_files, extract_time)) %>%
+  arrange(time)
+pair_levels <- paste0(files_df$time[-nrow(files_df)], "-",
+                      files_df$time[-1])
+
+ 
+dist_summary <- bind_rows(lapply(seq_len(nrow(files_df)-1), function(i) {
+  pr <- pair_levels[i]
+  load(files_df$file[i]);   df1 <- esp_data; rm(esp_data)
+  load(files_df$file[i+1]); df2 <- esp_data; rm(esp_data)
+  df1_sub <- df1 %>% filter(t>=t1, t<=t2) %>%
+    select(t, node, v1 = all_of(var_selection))
+  df2_sub <- df2 %>% filter(t>=t1, t<=t2) %>%
+    select(t, node, v2 = all_of(var_selection))
+  inner_join(df1_sub, df2_sub, by=c("t","node")) %>%
+    transmute(pair=pr, t, node, dist2=(v1-v2)^2)
+}))
+
+
+global_esp_time <- dist_summary %>%
+  group_by(pair, t) %>%
+  summarise(global_esp = sqrt(sum(dist2)), .groups="drop")
+
+
+g1 <- pair_levels[1:5]
+g2 <- pair_levels[7:11]
+g3 <- pair_levels[13:14]
+g4 <- pair_levels[c(6,12)]
+
+
+global_ylim_common <- global_esp_time %>%
+  filter(pair %in% c(g1,g2,g3)) %>%
+  pull(global_esp) %>% range(na.rm=TRUE)
+global_ylim_g4 <- global_esp_time %>%
+  filter(pair %in% g4) %>%
+  pull(global_esp) %>% range(na.rm=TRUE)
+
+
+pal <- setNames(rep(NA, length(pair_levels)), pair_levels)
+pal[1:5]   <- c("#084594","#2171b5","#4292c6","#6baed6","#9ecae1")
+pal[6]     <- "#de2d26"
+pal[7:11]  <- c("#006d2c","#238b45","#41ab5d","#74c476","#a1d99b")
+pal[12]    <- "#000000"
+pal[13:14] <- c("#f7fcb9","#addd8e")
+
+
+make_plot_global <- function(idxs, title, ylim) {
+  ggplot(global_esp_time %>% filter(pair %in% pair_levels[idxs]),
+         aes(t, global_esp, color=pair, group=pair)) +
+    geom_line(size=1) + geom_point(size=1) +
+    scale_color_manual(values=pal[idxs]) +
+    scale_y_continuous(limits=ylim, expand=c(0,0)) +
+    labs(title=title, x="Time (t)", y="Global ESP", color="Pair") +
+    theme_classic() +
+    theme(plot.title=element_text(hjust=0.5))
+}
+
+pG1 <- make_plot_global(1:5,    "First day",             global_ylim_common)
+pG2 <- make_plot_global(7:11,   "Second day",            global_ylim_common)
+pG3 <- make_plot_global(13:14,  "Third day",             global_ylim_common)
+pG4 <- make_plot_global(c(6,12), "1st→2nd & 2nd→3rd",    global_ylim_g4)
+
+gG <- arrangeGrob(pG1, pG2, pG3, pG4, ncol=1)
+ggsave("Global_ESP_groups.pdf", gG, width=8, height=24)
+
+
+
+node_n   <- max(dist_summary$node)
+node_set <- make_nonoverlap_windows(node_n, part_n)
+window_labels <- apply(node_set,1,function(r) paste0(min(r),"-",max(r)))
+windows_df <- tibble(
+  node   = as.vector(t(node_set)),
+  window = factor(rep(window_labels,each=part_n),
+                  levels=window_labels)
+)
+
+local_esp_time <- dist_summary %>%
+  inner_join(windows_df, by="node") %>%
+  group_by(pair, t, window) %>%
+  summarise(local_esp=sqrt(sum(dist2)), .groups="drop")
+
+
+local_ylim_1  <- local_esp_time %>% filter(pair %in% g1) %>% pull(local_esp) %>% range(na.rm=TRUE)
+local_ylim_2  <- local_esp_time %>% filter(pair %in% g2) %>% pull(local_esp) %>% range(na.rm=TRUE)
+local_ylim_3  <- local_esp_time %>% filter(pair %in% g3) %>% pull(local_esp) %>% range(na.rm=TRUE)
+local_ylim_4  <- local_esp_time %>% filter(pair %in% g4) %>% pull(local_esp) %>% range(na.rm=TRUE)
+
+window_colors <- c("#deebf7","#c6dbef","#9ecae1","#6baed6","#3182bd")
+#window_colors <- c("#deebf7","#de2d26","#006d2c","#f7fcb9","#3182bd")
+
+
+for (pr in pair_levels) {
+  dfp <- local_esp_time %>% filter(pair==pr)
+  ylim <- if (pr %in% g1) local_ylim_1
+          else if (pr %in% g2) local_ylim_2
+          else if (pr %in% g3) local_ylim_3
+          else local_ylim_4
+
+  pL <- ggplot(dfp, aes(t, local_esp, color=window, group=window)) +
+    geom_line(size=0.7) + geom_point(size=1) +
+    scale_color_manual(values=window_colors) +
+    scale_y_continuous(limits=ylim, expand=c(0,0)) +
+    labs(
+      title=paste0("Local ESP for ",pr," (win=",part_n,")"),
+      x="Time (t)", y="Local ESP", color="Node range"
+    ) +
+    theme_classic() +
+    theme(plot.title=element_text(hjust=0.5))
+
+  ggsave(paste0("Local_ESP_",pr,".pdf"), pL,
+         width=8, height=4)
+}
+
+```
+trajectory
+```{r}
+ 
+library(dplyr)
+library(ggplot2)
+
+
+load("/Users/boweiyu/Arm project/Alife paper/ESP/R1_0_168_live.rdata")  # 会载入 esp_data
+
+
+df_plot <- esp_data %>%
+  filter(t >= 4950, t <= 4990)
+
+
+print(df_plot %>% count(t) %>% head())
+
+ 
+p <- ggplot(df_plot, aes(x = x, y = y, group = t)) +
+  geom_path(color = "black", alpha = 0.6) +
+  coord_equal() +
+  labs(
+    title = "Arm Trajectories for t = 4950–4990",
+    x     = "X coordinate",
+    y     = "Y coordinate"
+  ) +
+  theme_classic()
+
+  
+print(p)
+
+  
+# ggsave("trajectories_4950_4990.png", p, width = 8, height = 6, dpi = 300)
+
+
+ 
+# ggsave("ESP_trajectories_4950_4990.png", width = 8, height = 6, dpi = 300)
+
+
+```
+paper
+```{r}
+library(dplyr)
+library(ggplot2)
+library(cowplot)   
+
+
+data_folder   <- "/Users/boweiyu/Arm project/Alife paper/ESP/"
+t1            <- 4950
+t2            <- 4990
+var_selection <- "y"
+
+all_files <- list.files(
+  data_folder,
+  pattern    = "^R1_[0-9]+_168_(live|dead)\\.rdata$",
+  full.names = TRUE
+)
+
+extract_time <- function(f) as.numeric(sub("^R1_(\\d+)_168_.*$", "\\1", basename(f)))
+files_df <- tibble(
+  file = all_files,
+  time = sapply(all_files, extract_time)
+) %>% arrange(time)
+
+pair_levels <- paste0(files_df$time[-nrow(files_df)], "-", files_df$time[-1])
+
+
+load(files_df$file[1])
+u_series <- esp_data %>%
+  filter(t >= t1, t <= t2) %>%
+  distinct(t, u) %>%
+  arrange(t)
+rm(esp_data)
+
+
+dist_summary <- bind_rows(lapply(seq_len(nrow(files_df)-1), function(i) {
+  pr <- pair_levels[i]
+  load(files_df$file[i]);   df1 <- esp_data; rm(esp_data)
+  load(files_df$file[i+1]); df2 <- esp_data; rm(esp_data)
+
+  df1 %>% filter(t>=t1, t<=t2) %>% select(t, node, v1=all_of(var_selection)) -> df1_sub
+  df2 %>% filter(t>=t1, t<=t2) %>% select(t, node, v2=all_of(var_selection)) -> df2_sub
+
+  inner_join(df1_sub, df2_sub, by=c("t","node")) %>%
+    transmute(pair=pr, t, node, dist2=(v1-v2)^2)
+}))
+
+global_esp_time <- dist_summary %>%
+  group_by(pair, t) %>%
+  summarise(global_esp = sqrt(sum(dist2)), .groups="drop")
+
+
+g1 <- pair_levels[1:5]
+g2 <- pair_levels[7:11]
+g3 <- pair_levels[13:14]
+g4 <- pair_levels[c(6,12)]
+
+ylim_common <- global_esp_time %>% filter(pair %in% c(g1,g2,g3)) %>% pull(global_esp) %>% range()
+ylim_g4     <- global_esp_time %>% filter(pair %in% g4)       %>% pull(global_esp) %>% range()
+
+pal <- setNames(rep(NA, length(pair_levels)), pair_levels)
+pal[1:5]   <- c("#084594","#2171b5","#4292c6","#6baed6","#9ecae1")
+pal[6]     <- "#de2d26"
+pal[7:11]  <- c("#006d2c","#238b45","#41ab5d","#74c476","#a1d99b")
+pal[12]    <- "#000000"
+pal[13:14] <- c("#f7fcb9","#addd8e")
+
+x_limits <- c(t1, t2)
+
+
+make_esp_plot <- function(idxs, title, ylim) {
+  ggplot(global_esp_time %>% filter(pair %in% pair_levels[idxs]),
+         aes(x=t, y=global_esp, color=pair, group=pair)) +
+    geom_line(size=1) + geom_point(size=1) +
+    scale_color_manual(values=pal[idxs]) +
+    scale_x_continuous(limits=x_limits, expand=c(0,0)) +
+    scale_y_continuous(limits=ylim,       expand=c(0,0)) +
+    labs(title=title, y="Global ESP", color="Data Pair") +
+    theme_classic() +
+    theme(
+      plot.title   = element_text(hjust=0.5, size=28),
+      axis.title   = element_text(size=22),
+      axis.text    = element_text(size=20),
+      legend.title = element_text(size=22),
+      legend.text  = element_text(size=20)
+    )
+}
+
+ 
+plot_u <- function() {
+  ggplot(u_series, aes(x = t, y = u)) +
+    geom_line(size = 0.7) +
+    scale_x_continuous(limits = x_limits, expand = c(0,0)) +
+    scale_y_continuous(limits = c(0,1), breaks=c(0,1), expand=c(0,0)) +
+    labs(x = "Time (t)", y = "u") +
+    theme_classic() +
+    theme(
+      axis.title   = element_text(size = 22),
+      axis.text    = element_text(size = 24)
+    )
+}
+
+
+to_plot <- list(
+  list(idxs=1:5,    title="1st day",               ylim=ylim_common, file="ESP_1st_day.png"),
+  list(idxs=7:11,   title="2nd day",               ylim=ylim_common, file="ESP_2nd_day.png"),
+  list(idxs=13:14,  title="3rd day",               ylim=ylim_common, file="ESP_3rd_day.png"),
+  list(idxs=c(6,12),title="1st to 2nd & 2nd to 3rd",    ylim=ylim_g4,     file="ESP_2transitions.png")
+)
+
+
+for (tp in to_plot) {
+  p_esp <- make_esp_plot(tp$idxs, tp$title, tp$ylim)
+  ggsave(tp$file, p_esp, dpi=300, width=8, height=5)
+}
+
+
+p_u <- plot_u()
+ggsave("ESP_input.png", p_u, dpi=300, width=8, height=2)
+
+
+```
+paper（distance）
+```{r}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+
+# —— 参数 —— 
+t1            <- 4950          
+t2            <- 4990           
+var_selection <- "y"         
+
+
+data_folder <- "/Users/boweiyu/Arm project/Alife paper/ESP/"
+all_files   <- list.files(
+  path       = data_folder,
+  pattern    = "^R1_[0-9]+_168_(live|dead)\\.rdata$",
+  full.names = TRUE
+)
+
+
+extract_time <- function(f) {
+  as.numeric(sub("^R1_([0-9]+)_168_.*$", "\\1", basename(f)))
+}
+files_df <- tibble(
+  file = all_files,
+  time = sapply(all_files, extract_time)
+) %>% arrange(time)
+
+
+pair_levels <- paste0(
+  files_df$time[-nrow(files_df)], "-",
+  files_df$time[-1]
+)
+
+
+dist_summary <- bind_rows(
+  lapply(seq_len(nrow(files_df) - 1), function(i) {
+    f1      <- files_df$file[i]
+    f2      <- files_df$file[i + 1]
+    tm_pair <- pair_levels[i]
+
+    load(f1); df1 <- esp_data; rm(esp_data)
+    load(f2); df2 <- esp_data; rm(esp_data)
+
+    df1_sub <- df1 %>% filter(t >= t1 & t <= t2)
+    df2_sub <- df2 %>% filter(t >= t1 & t <= t2)
+
+    merged <- merge(
+      df1_sub, df2_sub,
+      by       = c("t","node"),
+      suffixes = c("_1","_2")
+    )
+
+    col1 <- paste0(var_selection, "_1")
+    col2 <- paste0(var_selection, "_2")
+
+    merged %>%
+      transmute(
+        pair = tm_pair,
+        node,
+        dist = abs(.data[[col1]] - .data[[col2]])
+      )
+  })
+)
+
+
+agg_dist <- dist_summary %>%
+  group_by(pair, node) %>%
+  summarise(dist_sum = sum(dist), .groups = "drop") %>%
+  mutate(pair = factor(pair, levels = pair_levels)) %>%
+  arrange(pair, node)
+
+
+pal <- setNames(rep(NA, length(pair_levels)), pair_levels)
+pal[1:5]   <- c("#084594","#2171b5","#4292c6","#6baed6","#9ecae1")
+pal[6]     <- "#de2d26"
+pal[7:11]  <- c("#006d2c","#238b45","#41ab5d","#74c476","#a1d99b")
+pal[12]    <- "#000000"
+pal[13:14] <- c("#f7fcb9","#addd8e")
+
+
+common_idxs <- c(1:5, 7:11, 13:14)
+x_common   <- agg_dist %>%
+  filter(pair %in% pair_levels[common_idxs]) %>%
+  pull(dist_sum) %>% range(na.rm = TRUE)
+
+p4_idxs <- c(6, 12)
+x_p4    <- agg_dist %>%
+  filter(pair %in% pair_levels[p4_idxs]) %>%
+  pull(dist_sum) %>% range(na.rm = TRUE)
+
+x_p4 <- c(0, 600)
+
+
+y_limits <- c(100, 1)
+
+
+make_plot <- function(pairs, title, x_limits) {
+  ggplot(
+    agg_dist %>% filter(pair %in% pair_levels[pairs]),
+    aes(x = dist_sum, y = node, color = pair, group = pair)
+  ) +
+    geom_path(aes(order = node), size = 0.7) +
+    geom_point(size = 1.5) +
+    scale_color_manual(values = pal[pairs]) +
+    scale_x_continuous(limits = x_limits, expand = c(0,0)) +
+    scale_y_reverse(
+      limits = y_limits,
+      breaks = seq(1, 100, by = 10),
+      expand = c(0,0)
+    ) +
+    labs(
+      title = title,
+      x     = "Distance",   
+      y     = "Node",
+      color = "Pair"
+    ) +
+    theme_classic() +
+    theme(
+      panel.grid       = element_blank(),
+      legend.position  = "right",
+      plot.title       = element_text(hjust = 0.5, size = 22),  
+      axis.title       = element_text(size = 22),               
+      axis.text        = element_text(size = 20),               
+      legend.title     = element_text(size = 22),              
+      legend.text      = element_text(size = 20)                
+    )
+}
+
+ 
+p1 <- make_plot(1:5,    "1st day",           x_common)
+ggsave("ESP_index(4950-4990)_First_day.png",  p1, width = 8, height = 4)
+
+p2 <- make_plot(7:11,   "2nd day",          x_common)
+ggsave("ESP_index(4950-4990)_Second_day.png", p2, width = 8, height = 4)
+
+p3 <- make_plot(13:14,  "3rd day",           x_common)
+ggsave("ESP_index(4950-4990)_Third_day.png",  p3, width = 8, height = 4)
+
+p4 <- make_plot(c(6,12), "1st to 2nd & 2nd to 3rd", x_p4)
+ggsave("ESP_index(4950-4990)_1st2nd_2nd3rd.png", p4, width = 8, height = 4)
+
+
+```
+one time
+```{r}
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+
+
+data_folder   <- "/Users/boweiyu/Arm project/Alife paper/ESP/"
+t1            <- 4950
+t2            <- 4990
+var_selection <- "y"
+
+all_files <- list.files(
+  data_folder,
+  pattern    = "^R1_[0-9]+_168_(live|dead)\\.rdata$",
+  full.names = TRUE
+)
+
+extract_time <- function(f) as.numeric(sub("^R1_(\\d+)_168_.*$", "\\1", basename(f)))
+files_df <- tibble(
+  file = all_files,
+  time = sapply(all_files, extract_time)
+) %>% arrange(time)
+
+pair_levels <- paste0(files_df$time[-nrow(files_df)], "-", files_df$time[-1])
+
+
+load(files_df$file[1])            
+u_series <- esp_data %>%
+  filter(t >= t1, t <= t2) %>%
+  distinct(t, u) %>%
+  arrange(t)
+rm(esp_data)
+
+
+dist_summary <- bind_rows(lapply(seq_len(nrow(files_df)-1), function(i) {
+  pr <- pair_levels[i]
+  load(files_df$file[i]);   df1 <- esp_data; rm(esp_data)
+  load(files_df$file[i+1]); df2 <- esp_data; rm(esp_data)
+
+  df1 %>% filter(t >= t1, t <= t2) %>% select(t, node, v1 = all_of(var_selection)) -> df1_sub
+  df2 %>% filter(t >= t1, t <= t2) %>% select(t, node, v2 = all_of(var_selection)) -> df2_sub
+
+  inner_join(df1_sub, df2_sub, by = c("t","node")) %>%
+    transmute(pair = pr, t, node, dist2 = (v1 - v2)^2)
+}))
+
+global_esp_time <- dist_summary %>%
+  group_by(pair, t) %>%
+  summarise(global_esp = sqrt(sum(dist2)), .groups = "drop")
+
+
+g1     <- 1:5
+g_rest <- list(
+  list(idxs = 7:11,   title = "2nd day",             ylim = NULL, file = "ESP_2nd_day.png"),
+  list(idxs = 13:14,  title = "3rd day",             ylim = NULL, file = "ESP_3rd_day.png"),
+  list(idxs = c(6,12),title = "1st to 2nd & 2nd to 3rd", ylim = NULL, file = "ESP_2transitions.png")
+)
+
+ylim_common <- global_esp_time %>%
+  filter(pair %in% pair_levels[c(g1,7:11,13:14)]) %>%
+  pull(global_esp) %>% range()
+ylim_g4     <- global_esp_time %>%
+  filter(pair %in% pair_levels[c(6,12)]) %>%
+  pull(global_esp) %>% range()
+
+pal <- setNames(rep(NA, length(pair_levels)), pair_levels)
+pal[1:5]    <- c("#084594","#2171b5","#4292c6","#6baed6","#9ecae1")
+pal[6]      <- "#de2d26"
+pal[7:11]   <- c("#006d2c","#238b45","#41ab5d","#74c476","#a1d99b")
+pal[12]     <- "#000000"
+pal[13:14]  <- c("#f7fcb9","#addd8e")
+
+x_limits     <- c(t1, t2)
+common_breaks<- seq(t1, t2, length.out = 5)
+common_margin<- margin(0, 0, 0, 0, unit = "pt")
+
+
+make_esp_plot <- function(idxs, title, ylim) {
+  ggplot(global_esp_time %>% filter(pair %in% pair_levels[idxs]),
+         aes(x = t, y = global_esp, color = pair, group = pair)) +
+    geom_line(size = 1) +
+    geom_point(size = 1) +
+    scale_color_manual(values = pal[idxs]) +
+    scale_x_continuous(limits = x_limits,
+                       breaks = common_breaks,
+                       expand = c(0, 0)) +
+    scale_y_continuous(limits = ylim, expand = c(0, 0)) +
+    labs(title = title, y = "Global ESP", color = "Data Pair") +
+    theme_classic() +
+    theme(
+      plot.title   = element_text(hjust = 0.5, size = 28),
+      axis.title   = element_text(size = 22),
+      axis.text    = element_text(size = 20),
+      legend.title = element_text(size = 22),
+      legend.text  = element_text(size = 20),
+      plot.margin  = common_margin
+    )
+}
+
+
+make_esp_with_u_top <- function(idxs, title, ylim) {
+  y_min    <- ylim[1]
+  y_max    <- ylim[2]
+  y_range  <- y_max - y_min
+  band_h   <- 0.1 * y_range
+
+  
+  u_plot <- u_series %>%
+    mutate(y_mapped = u * band_h + (y_max - band_h))
+
+  ggplot(global_esp_time %>% filter(pair %in% pair_levels[idxs]),
+         aes(x = t, y = global_esp, color = pair, group = pair)) +
+    geom_line(size = 1) +
+    geom_point(size = 1) +
+    scale_color_manual(values = pal[idxs]) +
+    
+    geom_line(
+      data = u_plot,
+      aes(x = t, y = y_mapped),
+      inherit.aes = FALSE,
+      size = 0.8,
+      linetype = "solid"
+    ) +
+    scale_x_continuous(limits = x_limits,
+                       breaks = common_breaks,
+                       expand = c(0, 0)) +
+    scale_y_continuous(limits = ylim, expand = c(0, 0)) +
+    labs(title = title, y = "Global ESP", color = "Data Pair") +
+    theme_classic() +
+    theme(
+      plot.title       = element_text(hjust = 0.5, size = 28),
+      axis.title       = element_text(size = 22),
+      axis.text        = element_text(size = 20),
+      legend.title     = element_text(size = 22),
+      legend.text      = element_text(size = 20),
+      plot.margin      = common_margin
+    )
+}
+
+
+p1_top_u <- make_esp_with_u_top(g1, "1st day", ylim_common)
+ggsave("ESP_1st_day_with_u_top.png", p1_top_u,
+       dpi = 300, width = 8, height = 5)
+
+
+for (tp in g_rest) {
+  ylim <- if (tp$file == "ESP_2transitions.png") ylim_g4 else ylim_common
+  p    <- make_esp_plot(tp$idxs, tp$title, ylim)
+  ggsave(tp$file, p, dpi = 300, width = 8, height = 5)
+}
+
+```
+
